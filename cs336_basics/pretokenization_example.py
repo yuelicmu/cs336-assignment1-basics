@@ -50,6 +50,7 @@ def find_chunk_boundaries(
     return sorted(set(chunk_boundaries))
 
 ## Usage
+"""
 with open(..., "rb") as f:
     boundaries = find_chunk_boundaries(
         f, num_processes, "<|endoftext|>".encode("utf-8"))
@@ -60,3 +61,20 @@ with open(..., "rb") as f:
         f.seek(start)
         chunk = f.read(end - start).decode("utf-8", errors="ignore")
         # Run pre-tokenization on your chunk and store the counts for each pre-token
+"""
+
+
+if __name__ == "__main__":
+    from tests.common import FIXTURES_PATH
+    # test_file_path = FIXTURES_PATH / "corpus.en"
+    test_file_path = FIXTURES_PATH / "tinystories_sample_5M.txt"
+    print(test_file_path)
+    with open(test_file_path, "rb") as f:
+        mini_trunk = f.read(200)
+        print(type(mini_trunk))
+        print(list(mini_trunk))
+        print(mini_trunk)
+
+        boundaries = find_chunk_boundaries(
+            f, 128, "<|endoftext|>".encode("utf-8"))
+        print(boundaries)
