@@ -18,6 +18,8 @@ from cs336_basics.model import (
     Softmax,
     ScaledDotProductAttentionModule,
     MultiHeadSelfAttention,
+    TransformerBlock,
+    TransformerLM, 
 )
 
 from einops import einsum, rearrange
@@ -311,7 +313,27 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+
+    TBmodule = TransformerBlock(d_model = d_model, num_heads = num_heads, d_ff = d_ff,
+                                              max_seq_len = max_seq_len, theta = theta)
+    TBmodule.mha.load_state_dict({
+        "w_q": rearrange(weights["attn.q_proj.weight"], "(num_heads d_v) d_model -> num_heads d_v d_model", num_heads=num_heads),
+        "w_k": rearrange(weights["attn.k_proj.weight"], "(num_heads d_v) d_model -> num_heads d_v d_model", num_heads=num_heads),
+        "w_v": rearrange(weights["attn.v_proj.weight"], "(num_heads d_v) d_model -> num_heads d_v d_model", num_heads=num_heads),
+        "w_o": weights["attn.output_proj.weight"]
+    })
+    TBmodule.rms1.load_state_dict({
+        "weight": weights["ln1.weight"]
+    })
+    TBmodule.rms2.load_state_dict({
+        "weight": weights["ln2.weight"]
+    })
+    TBmodule.swiGLU.load_state_dict({
+        "w1_weight": weights["ffn.w1.weight"],
+        "w2_weight": weights["ffn.w2.weight"],
+        "w3_weight": weights["ffn.w3.weight"]
+    })
+    return TBmodule(in_features)
 
 
 def run_transformer_lm(
@@ -393,7 +415,37 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    LMmodule = TransformerLM(vocab_size = vocab_size, max_seq_len = context_length,
+                               d_model = d_model, num_layers = num_layers, num_heads = num_heads,
+                               d_ff = d_ff, theta = rope_theta)
+    LMmodule.embedding.load_state_dict({
+        "weight": weights["token_embeddings.weight"]
+    }) 
+    for layer_idx in range(num_layers):
+        LMmodule.layers[layer_idx].mha.load_state_dict({
+            "w_q": rearrange(weights[f"layers.{layer_idx}.attn.q_proj.weight"], "(num_heads d_v) d_model -> num_heads d_v d_model", num_heads=num_heads),
+            "w_k": rearrange(weights[f"layers.{layer_idx}.attn.k_proj.weight"], "(num_heads d_v) d_model -> num_heads d_v d_model", num_heads=num_heads),
+            "w_v": rearrange(weights[f"layers.{layer_idx}.attn.v_proj.weight"], "(num_heads d_v) d_model -> num_heads d_v d_model", num_heads=num_heads),
+            "w_o": weights[f"layers.{layer_idx}.attn.output_proj.weight"]
+        })
+        LMmodule.layers[layer_idx].rms1.load_state_dict({
+            "weight": weights[f"layers.{layer_idx}.ln1.weight"]
+        })
+        LMmodule.layers[layer_idx].rms2.load_state_dict({
+            "weight": weights[f"layers.{layer_idx}.ln2.weight"]
+        })
+        LMmodule.layers[layer_idx].swiGLU.load_state_dict({
+            "w1_weight": weights[f"layers.{layer_idx}.ffn.w1.weight"],
+            "w2_weight": weights[f"layers.{layer_idx}.ffn.w2.weight"],
+            "w3_weight": weights[f"layers.{layer_idx}.ffn.w3.weight"]
+        })
+    LMmodule.rms_final.load_state_dict({
+        "weight": weights["ln_final.weight"]   
+    })
+    LMmodule.lm_head.load_state_dict({
+        "weight": weights["lm_head.weight"]
+    })
+    return LMmodule(in_indices)
 
 
 def run_rmsnorm(

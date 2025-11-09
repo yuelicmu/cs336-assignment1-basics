@@ -291,3 +291,75 @@ class MultiHeadSelfAttention(nn.Module):
         attn_reshape = rearrange(attn, "... num_heads seq_len d_v -> ... seq_len (num_heads d_v)")
         return einsum(self.w_o, attn_reshape, "... d_out d_model, ... seq_len d_model -> ... seq_len d_out")
     
+class TransformerBlock(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        d_ff: int,
+        num_heads: int,
+        theta: float, 
+        max_seq_len: int, 
+        # token_positions: Int[Tensor, " ... sequence_length"],
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
+        super().__init__()
+        self.mha = MultiHeadSelfAttention(
+            d_model=d_model,
+            num_heads=num_heads,
+            device=device,
+            dtype=dtype,
+            use_rope=True,
+            theta=theta,
+            max_seq_len=max_seq_len,
+            token_positions=None  # Will be set in forward
+        )
+        self.rms1 = RMSNorm(d_model=d_model, device=device, dtype=dtype)
+        self.swiGLU = SwiGLU(d_model=d_model, d_ff=d_ff, device=device, dtype=dtype)
+        self.rms2 = RMSNorm(d_model=d_model, device=device, dtype=dtype)
+
+    def forward(self, x: Float[Tensor, "... seq_len d_model"]) -> Float[Tensor, "... seq_len d_model"]:
+        token_positions = torch.arange(x.shape[1]).unsqueeze(0).expand(x.shape[0], -1)
+        self.mha.token_positions = token_positions
+        x = x + self.mha(self.rms1(x))
+        x = x + self.swiGLU(self.rms2(x))
+        return x
+
+class TransformerLM(nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        d_model: int,
+        d_ff: int,
+        num_heads: int,
+        num_layers: int,
+        theta: float,
+        max_seq_len: int,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
+        super().__init__()
+        self.embedding = Embedding(num_embeddings=vocab_size, embedding_dim=d_model, device=device, dtype=dtype)
+        self.layers = nn.ModuleList()
+        for _ in range(num_layers):
+            self.layers.append(
+                TransformerBlock(
+                    d_model=d_model,
+                    d_ff=d_ff,
+                    num_heads=num_heads,
+                    theta=theta,
+                    max_seq_len=max_seq_len,
+                    device=device,
+                    dtype=dtype
+                )
+            )
+        self.rms_final = RMSNorm(d_model=d_model, device=device, dtype=dtype)
+        self.lm_head = Linear(in_features=d_model, out_features=vocab_size, device=device, dtype=dtype)
+
+    def forward(self, token_ids: Int[Tensor, " batch sequence_length"]) -> Float[Tensor, " batch sequence_length vocab_size"]:
+        x = self.embedding(token_ids)
+        for layer in self.layers:
+            x = layer(x)
+        x = self.rms_final(x)
+        logits = self.lm_head(x)
+        return logits
